@@ -1,0 +1,13 @@
+fail-on-severity: 'critical'
+
+ignore:
+  - fix-state: unknown
+  - fix-state: not-fixed
+  - fix-state: wont-fix
+
+  # Version is fixed by Oracle.
+  - vulnerability: GHSA-rjf2-j2r6-q8gr
+    package:
+      name: vm2
+      version: 3.9.3
+      type: npm

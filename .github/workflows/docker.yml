@@ -1,0 +1,156 @@
+---
+name: Builds the SuiteCloud CLI Docker image and pushes to hub.docker.com
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+
+  schedule:
+    - cron: "11 4 * * *" # everyday at 04:11
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: index.docker.io/registry:2
+        ports:
+          - 5000:5000
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v2
+
+      - name: Fetching tags
+        run: git fetch --prune --unshallow --force --tags
+
+      - name: Prepare
+        id: prep
+        run: |
+          DOCKER_IMAGE=index.docker.io/opsgang/suitecloud-cli
+          LAST_GIT_TAG=$(git describe --tags --abbrev=0)
+          SCCLI_VERSION=${LAST_GIT_TAG:1}
+          VERSION=noop
+          GIT_BRANCH=${GITHUB_REF##*/}
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            VERSION=nightly
+          elif [ "${{ github.event_name }}" = "pull_request_target" ]; then
+            VERSION=pr-${{ github.event.number }}
+          elif [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          elif [[ $GITHUB_REF == refs/heads/* ]]; then
+            VERSION=$(echo ${GITHUB_REF#refs/heads/} | sed -r 's#/+#-#g')
+            if [ "${{ github.event.repository.default_branch }}" = "$VERSION" ]; then
+              VERSION=edge
+            fi
+          fi
+          TAGS="${DOCKER_IMAGE}:${VERSION}"
+          if [[ $VERSION =~ ^v[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            SCCLI_VERSION=${VERSION:1}
+            MINOR=${SCCLI_VERSION%.*}
+            MAJOR=${MINOR%.*}
+            TAGS="${DOCKER_IMAGE}:${SCCLI_VERSION},${DOCKER_IMAGE}:${MINOR},${DOCKER_IMAGE}:${MAJOR},${DOCKER_IMAGE}:latest,localhost:5000/test"
+          fi
+
+          echo ::set-output name=version::${VERSION}
+          echo ::set-output name=sccli_version::${SCCLI_VERSION}
+          echo ::set-output name=docker_image::${DOCKER_IMAGE}
+          echo ::set-output name=git_branch::${GIT_BRANCH}
+          echo ::set-output name=tags::${TAGS}
+          echo ::set-output name=created::$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          echo ::set-output name=testtag::localhost:5000/test
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+        with:
+          driver-opts: network=host
+
+      - name: Cache setup
+        uses: actions/cache@v2
+        with:
+          path: |
+            /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}
+
+      - name: Available platforms
+        run: echo ${{ steps.qemu.outputs.platforms }}
+
+      - name: Build for scans
+        uses: docker/build-push-action@v2
+        with:
+          build-args: |
+            VERSION=${{ steps.prep.outputs.version }}
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.prep.outputs.testtag }}
+
+      - name: Run the Anchore Grype scan action itself with GitHub Advanced Security code scanning integration enabled
+        uses: anchore/scan-action@main
+        with:
+          image: ${{ steps.prep.outputs.testtag }}
+          acs-report-enable: true
+          fail-build: false
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Cached build and push
+        uses: docker/build-push-action@v2
+        with:
+          build-args: |
+            VERSION=${{ steps.prep.outputs.sccli_version }}
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache
+          context: .
+          file: ./Dockerfile
+          # See https://github.com/opencontainers/image-spec/blob/master/annotations.md
+          labels: |
+            org.opencontainers.image.created=${{ steps.prep.outputs.created }}
+            org.opencontainers.image.description=${{ github.event.repository.description }}
+            org.opencontainers.image.documentation=https://github.com/opsgang/docker_suitecloud_cli
+            org.opencontainers.image.licenses=${{ github.event.repository.license.spdx_id }}
+            org.opencontainers.image.ref.name=${{ steps.prep.outputs.git_branch }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.event.repository.clone_url }}
+            org.opencontainers.image.title=sitecloud-cli
+            org.opencontainers.image.url=${{ github.event.repository.html_url }}
+            org.opencontainers.image.version=${{ steps.prep.outputs.version }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.prep.outputs.tags }}
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.prep.outputs.tag }}
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          format: 'template'
+          template: '@/contrib/sarif.tpl'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Move results into single directory
+        run: mkdir image_scan_results; mv results.sarif image_scan_results/ ; mv trivy-results.sarif image_scan_results/
+
+# There is a bug atm in the Github Action:
+# https://github.com/anchore/scan-action/issues/116
+#      - name: Upload Scan Reports
+#        uses: github/codeql-action/upload-sarif@v1
+#        with:
+#          sarif_file: image_scan_results
