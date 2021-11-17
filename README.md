@@ -9,13 +9,23 @@ to be directly present on a host OS, hence this container image.
 
 ## Usage
 
-* `docker run --rm -it -v $(pwd):/workspace:z -w /workspace opsgang/suitecloud-cli [command]`
+```sh
+docker run \
+  --rm \
+  -it \
+  -v $HOME/.suitecloud-sdk:/home/suitecloud/.suitecloud-sdk:z \
+  -v $(pwd):/workspace:z -w /workspace opsgang/suitecloud-cli [command]
+  `
+```
+
+The `suitecloud-cli` runs with the conventional uid 1000 by default.
+Feel free to change it with the `-u [num]` docker parameter.
 
 ## Installed packages
 
 * Debian Bullseye Slim
 * Node.js v16.13.0-deb-1nodesource1
-* JDK 17
+* JDK 11
 * @oracle/suitecloud-cli v1.3.1
 
 ## Testing
