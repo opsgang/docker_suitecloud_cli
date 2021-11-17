@@ -14,8 +14,18 @@ docker run \
   --rm \
   -it \
   -v $HOME/.suitecloud-sdk:/home/suitecloud/.suitecloud-sdk:z \
-  -v $(pwd):/workspace:z -w /workspace opsgang/suitecloud-cli [command]
-  `
+  -v $(pwd):/workspace:z -w /workspace opsgang/suitecloud-cli:edge [command]
+```
+
+or you can just create a shell alias and use that:
+
+```sh
+alias suitecloud-cli="docker run --rm -it -v $HOME/.suitecloud-sdk:/home/suitecloud/.suitecloud-sdk:z -v $(pwd):/workspace:z -w /workspace opsgang/suitecloud-cli:edge"
+```
+then e.g.
+
+```sh
+suitecloud-cli cproject:create -i
 ```
 
 The `suitecloud-cli` runs with the conventional uid 1000 by default.
