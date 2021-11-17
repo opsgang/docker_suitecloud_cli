@@ -1,4 +1,4 @@
-FROM openjdk:17-jdk-slim-bullseye
+FROM openjdk:11-jdk-slim-bullseye
 
 RUN \
   apt-get update && apt-get upgrade -y && apt-get install -y curl && \
@@ -6,3 +6,6 @@ RUN \
   apt-get update && apt-get install -y nodejs && \
   rm -rf /var/lib/apt/lists/* && \
   npm install -g @oracle/suitecloud-cli
+
+ENTRYPOINT ["suitecloud"]
+CMD ["-h"]
